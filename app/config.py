@@ -1,5 +1,8 @@
 import os
 import secrets
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # SQLite Database Configuration
 class Config:

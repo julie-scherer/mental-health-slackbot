@@ -1,4 +1,4 @@
-from app import app, db, slack_events_adapter, client
+from app import db, slack_events_adapter, client
 from app.models import ScheduledMessage, User, RatingMessage, WelcomeMessage, Rating
 from flask import Response
 import datetime
@@ -241,12 +241,15 @@ def message(event_data):
         print('subtype message')
         return
     
-    BOT_ID = client.api_call('auth.test').get('user_id')
     channel = event.get('channel')
     timestamp = event.get('ts')
     slack_id = event.get('user')
     text = event.get('text')
-    user = User.query.filter_by(im_channel=channel).first() # get the user in this instant message channel
+    user = User.query.filter_by(im_channel=channel).first() # get the user in this instant message channel    
+    BOT_ID = client.api_call('auth.test').get('user_id')
+    # Ignore any messages from a bot or human who isn't in the database
+    if not user or BOT_ID:
+        return
     user_ratings = Rating.query.filter_by(user_id=user.id) # get the user's ratings
 
     # First, we will look for rating messages sent by the bot
@@ -271,10 +274,6 @@ def message(event_data):
             
             # Schedule next rating message
             schedule_rating_message(name=user.name, user_id=user.id, channel_id=channel)
-        return
-    
-    # Now, we can ignore any messages from a bot or human who isn't in the database
-    if not user:
         return
     
     # Next, we want to catch any 'get-summary' messages sent by the user
