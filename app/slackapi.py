@@ -1,15 +1,7 @@
-from app import app, db
+from app import app, db, slack_events_adapter, client
 from app.models import ScheduledMessage, User, RatingMessage, WelcomeMessage, Rating
-from config import SLACK_TOKEN, SIGNING_SECRET
 from flask import Response
 import datetime
-
-import slack
-from slackeventsapi import SlackEventAdapter
-
-
-slack_events_adapter = SlackEventAdapter(SIGNING_SECRET, '/slack/events', app)  # note you will need to add /slack/events endpoint to request URL in Event Subscriptions
-client = slack.WebClient(SLACK_TOKEN)
 
 
 
