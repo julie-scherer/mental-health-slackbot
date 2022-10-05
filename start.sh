@@ -1,1 +1,1 @@
-gunicorn server.py
+gunicorn server:flask_app

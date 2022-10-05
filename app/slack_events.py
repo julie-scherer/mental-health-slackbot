@@ -1,56 +1,57 @@
-from app import db, slack_events_adapter, client
+from app import slack_app, client, db, logging
 from app.models import ScheduledMessage, User, RatingMessage, WelcomeMessage, Rating
-from flask import Response
 import datetime
 
+from slack_sdk.errors import SlackApiError
+logger = logging.getLogger(__name__)
 
 
-'''
-Getting the user started
-'''
+
 #   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
 
 # **************************************************************
 # **************** MEMBER JOINED CHANNEL TRIGGER ***************
 # **************************************************************
 
-@slack_events_adapter.on('member_joined_channel')
-def member_joined_channel(event_data):
+@slack_app.event("member_joined_channel")
+def member_joined_channel(event):
     print('member joined channel!')
 
-    event = event_data['event']
-    slack_id = event['user']
+    # event = event_data.get('event')
+    slack_id = event.get('user')
     
+    # Call the users.info method using the WebClient
     response = client.users_info(user=slack_id)
-    user = response['user']
-    
-    is_bot = user['is_bot']
-    if is_bot:
-        print('A bot joined the channel')
-        return Response('A bot joined the channel')
+    try:
+        response = client.users_info(user=slack_id)
+        logger.info(response)
+        user = response.get('user')
+        if user.get('is_bot'):
+            return
+    except SlackApiError as e:
+        logger.error("Error fetching conversations: {}".format(e))
 
     user_in_database = User.query.filter_by(slack_id=slack_id).first()
     if not user_in_database:
-        profile = user['profile']
-        display_name = profile['display_name']
-        first_name = profile['first_name']
-        email = profile['email']
+        profile = user.get('profile')
+        display_name = profile.get('display_name')
+        first_name = profile.get('first_name')
+        email = profile.get('email')
 
         name = display_name if display_name != '' else first_name
         new_user = User(slack_id=slack_id, name=name, email=email)
         
         send_welcome_message(name=name, slack_id=slack_id, channel_id=slack_id)
-        
-    return
 
 
+
+#   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
 
 # **************************************************************
 # ****************** SEND WELCOME MESSAGE FUNC *****************
 # **************************************************************
 
-# * Welcome message object *
-# - - - - - - - - - - - - - -
+# Welcome message object
 class WelcomeMessageObj(object):
     def __init__(self, name, user, channel):
         self.name = name
@@ -121,17 +122,13 @@ def send_welcome_message(name, slack_id, channel_id):
 
 
 
-'''
-Catching, scheduling, and replying to rating messages
-'''
 #   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
 
 # **************************************************************
 # ******************* SCHEDULE RATING MESSAGE ******************
 # **************************************************************
 
-# * Rating message object *
-# - - - - - - - - - - - - - -
+# Rating message object
 class RatingMessageObj(object):
     def __init__(self, name, channel, post_at) -> None:
         self.name = name
@@ -189,7 +186,6 @@ class RatingMessageObj(object):
         }
 
 
-
 def schedule_rating_message(name, user_id, channel_id):
     print('scheduling rating message!')
     
@@ -220,21 +216,26 @@ def schedule_rating_message(name, user_id, channel_id):
                     message_object=scheduled_rating_message
                 )
 
-    return
 
 
-
+#   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
 
 # **************************************************************
 # ********************** ON EVENT, MESSAGE *********************
 # **************************************************************
 
+@slack_app.event("app_mention")
+def event_test(body, say, logger):
+    logger.info(body)
+    say("What's up?")
+
+
 import re
-@slack_events_adapter.on('message')
-def message(event_data):
+@slack_app.event("message")
+def handle_message(event):
     print('message event triggered!')
 
-    event = event_data.get('event')
+    # event = event_data.get('event')
 
     # Set base case
     if event.get('subtype') or event.get('channel_type') != 'im':
@@ -322,18 +323,18 @@ def message(event_data):
 
 
 
+#   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
 
 # **************************************************************
 # *********************** REACTION ADDED ***********************
 # **************************************************************
 
-reaction_events = []
-@slack_events_adapter.on('reaction_added')
-def rating_message_reaction(event_data):
+@slack_app.event("reaction_added")
+def rating_message_reaction(event):
     print('reaction added')
     # print(json.dumps(event_data, indent=2))
 
-    event = event_data.get('event')
+    # event = event_data.get('event')
     emoji = event.get('reaction')
     channel_id = event.get('item').get('channel')
     slack_id = event.get('user')
@@ -391,6 +392,7 @@ def rating_message_reaction(event_data):
 
 
 
+#   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
 
 # **************************************************************
 # ******************* GET RATING SUMMARY FUNC ******************
@@ -430,3 +432,57 @@ def get_rating_summary(user_ratings, channel):
             RATING_TEXT
         ]        
     }
+
+
+
+#   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
+
+@slack_app.event("app_home_opened")
+def update_home_tab(client, event, logger):
+  try:
+    # views.publish is the method that your app uses to push a view to the Home tab
+    client.views_publish(
+      # the user that opened your app's app home
+      user_id=event["user"],
+      # the view object that appears in the app home
+      view={
+        "type": "home",
+        "callback_id": "home_view",
+
+        # body of the view
+        "blocks": [
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*Welcome to your _App's Home_* :tada:"
+            }
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "This button won't do much for now but you can set up a listener for it using the `actions()` method and passing its unique `action_id`. See an example in the `examples` folder within your Bolt app."
+            }
+          },
+          {
+            "type": "actions",
+            "elements": [
+              {
+                "type": "button",
+                "text": {
+                  "type": "plain_text",
+                  "text": "Click me!"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    )
+  
+  except Exception as e:
+    logger.error(f"Error publishing home tab: {e}")
