@@ -1,6 +1,6 @@
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
 
 
 # Specify .env path and load global variables 
@@ -33,8 +33,8 @@ from flask import Flask, request
 flask_app = Flask(__name__)
 
 # Configure SQLite database
-from config import Config
-flask_app.config.from_object(Config)
+from . import config
+flask_app.config.from_object(config.Config)
 
 # Integrate Database to Flask App
 from flask_sqlalchemy import SQLAlchemy 
