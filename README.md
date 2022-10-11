@@ -1,4 +1,9 @@
-# Steps to Create and Install the Slack App
+**IMPORTANT NOTE: This app is still in development mode. Some features may not work properly.** This app was first created using the Slack event adapter to handle API calls. It's currently being reconfigured to use Bolt instead. The routes have been updated but not how the events are handled. I'm working offline to modify the logic/workflow to better utilize Bolt's features. I will update the repository and README as soon as app development is complete. Many thanks for your understanding and patience!
+
+
+# Ambience Slack App
+
+## Steps to Create and Install Slack App
 
 **Step 1**: Create Slack App at api.slack.com
 
@@ -41,7 +46,7 @@
     _https://api.slack.com/start/building/bolt-python#credentials_
     _https://api.slack.com/start/building/bolt-python#initialize_
 
-### Alas, we begin developing the app
+#### _Alas, we begin developing the app_
 
 **Step 6**: Install Flask and initalize Flask Application Factory
 
@@ -104,14 +109,23 @@
         >>>     ...
 
 
-
 **Check out these sources for more information!**
-    - https://slack.dev/python-slackclient/basic_usage.html#sending-a-message
-    - https://slack.dev/node-slack-sdk/reference/events-api
-    - https://api.slack.com/events
-    - https://github.com/slackapi/python-slack-events-api
+- https://slack.dev/python-slackclient/basic_usage.html#sending-a-message
+- https://slack.dev/node-slack-sdk/reference/events-api
+- https://api.slack.com/events
+- https://github.com/slackapi/python-slack-events-api
 
 
-# Ambience Slack App Workflow
+## App development workflow
 
-![Alt text](img/SlackAppWorkflow.png?raw=true "Flask App Workflow")
+![Alt text](img/SlackAppWorkflow.png?raw=true "App Workflow")
+
+
+## What does the bot do?
+
+![Alt text](img/Slide1.png?raw=true "App Demo")
+![Alt text](img/Slide2.png?raw=true "App Demo")
+![Alt text](img/Slide3.png?raw=true "App Demo")
+![Alt text](img/Slide4.png?raw=true "App Demo")
+![Alt text](img/Slide5.png?raw=true "App Demo")
+![Alt text](img/Slide6.png?raw=true "App Demo")
