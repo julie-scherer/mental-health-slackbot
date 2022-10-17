@@ -1,149 +1,128 @@
-from app import slack_app, client, db, logging
-from app.models import ScheduledMessage, User, RatingMessage, WelcomeMessage, Rating
-import datetime
+# ** Import Packages
+from app import app, client, Session
+from app.models import User, RatingMessage, Rating
+from flask import Response
+import datetime, re
 
+import logging
 from slack_sdk.errors import SlackApiError
+
 logger = logging.getLogger(__name__)
 
+BOT_ID = client.api_call("auth.test")['user_id']
+TEST_TIME = 300 # seconds
 
 
-#   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
+# ! Bolt Middleware - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 
-# **************************************************************
-# **************** MEMBER JOINED CHANNEL TRIGGER ***************
-# **************************************************************
+@app.middleware
+def log_request(body, next, logger):
+    # print(f"Log request{body}")
+    return next()
 
-@slack_app.event("member_joined_channel")
-def member_joined_channel(event):
-    print('member joined channel!')
-
-    # event = event_data.get('event')
-    slack_id = event.get('user')
-    
-    # Call the users.info method using the WebClient
-    response = client.users_info(user=slack_id)
-    try:
-        response = client.users_info(user=slack_id)
-        logger.info(response)
-        user = response.get('user')
-        if user.get('is_bot'):
-            return
-    except SlackApiError as e:
-        logger.error("Error fetching conversations: {}".format(e))
-
-    user_in_database = User.query.filter_by(slack_id=slack_id).first()
-    if not user_in_database:
-        profile = user.get('profile')
-        display_name = profile.get('display_name')
-        first_name = profile.get('first_name')
-        email = profile.get('email')
-
-        name = display_name if display_name != '' else first_name
-        new_user = User(slack_id=slack_id, name=name, email=email)
-        
-        send_welcome_message(name=name, slack_id=slack_id, channel_id=slack_id)
+@app.middleware
+def log_message(body, next, logger):
+    # print(f"Log message \n{body}")
+    return next()
 
 
+# ! Object Classes - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 
-#   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
+# ** Home view display
+class HomeView(object):
+    def __init__(self):
+        self.type = "home"
+        self.callback_id = "home_view"
 
-# **************************************************************
-# ****************** SEND WELCOME MESSAGE FUNC *****************
-# **************************************************************
+    # the view object that appears in the app home
+    def get_view(self):
+        HEADER = {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "*Welcome to your _App's Home_* :tada:"
+            }
+        }
 
-# Welcome message object
-class WelcomeMessageObj(object):
-    def __init__(self, name, user, channel):
-        self.name = name
-        self.user = user
-        self.channel = channel
-        self.timestamp = ''
-        self.thread_ts = ''
-        # self.completed = False
-    
-    def get_message(self):
         START_TEXT = {
             'type': 'section',
             'text': {
                 'type': 'mrkdwn',
-                'text': f"Hi {self.name}! I'm Ambience. I will be checking in on you every morning to see how you're feeling.\n"
+                'text': f"I'm Ambience. I will be checking in on you every morning to see how you're feeling.\n"
             }
         }
-        INSTRUCTIONS = {
+
+        DIVIDER = {'type': 'divider'}
+
+        BODY = {
             'type': 'section',
             'text': {
                 'type': 'mrkdwn',
                 'text': (
-                "It's pretty simple. All you have to is react to the message with one of these emojis!\n:smile: = 'Great!'  |  :slightly_smiling_face: = 'Good'  |  :neutral_face: = 'Okay'  |  :slightly_frowning_face: = 'Bad'  |  :white_frowning_face: = 'Awful'\n"
-                "\nYou can respond at any time throughout the day. You just have to reply before the day is over if you want me to save your response. If you can't check in, that's okay. We'll start fresh the next day! :blush:\n"
-                "\n_To get a summary of all your reactions, simply send 'get-summary'. As long as you've reacted to one of my messages before, you will get your summary in no time!_"
+                    "It's pretty simple. All you have to is react to the message with one of these emojis!"
+                    "\n\t:smile: = 'Great!'\n\t:slightly_smiling_face: = 'Good'\n\t:neutral_face: = 'Okay'\n\t:slightly_frowning_face: = 'Bad'\n\t:white_frowning_face: = 'Awful'\n"
+                    "\nYou can respond at any time throughout the day. You just have to reply before the day is over if you want me to save your response. If you can't check in, that's okay. We'll start fresh the next day! :blush:\n"
+                    "\n_To get a summary of all your reactions, simply send 'get-summary'. As long as you've reacted to one of my messages before, you will get your summary in no time!_"
                 )
             }
         }
+
         GET_STARTED = {
             'type': 'section',
             'text': {
                 'type': 'mrkdwn',
-                'text': "Now let's get started! What time would you like me to check in?"
+                'text': "Now let's get started!"
             }
         }
-        DIVIDER = {'type': 'divider'}
-        return {
-            'ts': self.timestamp,
-            'channel': self.channel,
-            'text': f"Hi {self.name}! I'm Ambience. I will be checking in on you every morning to see how you're feeling.",
-            'blocks': [
-                START_TEXT,
-                INSTRUCTIONS
-                # DIVIDER
-                # GET_STARTED,
+
+        BUTTON = {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "get_started",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "Get started!"
+                    }
+                }
             ]
         }
 
-
-def send_welcome_message(name, slack_id, channel_id):
-    print('sending welcome message!')
-
-    # Create WelcomeMessageObj object
-    welcome_message = WelcomeMessageObj(name=name, user=slack_id, channel=channel_id)  
-    message = welcome_message.get_message()     # get welcome message
-    response = client.chat_postMessage(**message)   # send message
-
-    welcome_message.thread_ts = response['ts']  # set timestamp
-    welcome_message.channel = channel_id        # set channel
-
-    user = User.query.filter_by(slack_id=slack_id).first()    # find the user_id stored in db
-    user.im_channel = response['channel'] 
-    db.session.commit()
-
-    new_welcome_message = WelcomeMessage(user_id=user.id, im_channel=channel_id, welcome_object=welcome_message)     # add data to WelcomeMessage table in db
-
-    schedule_rating_message(name=name, user_id=user.id, channel_id=channel_id)
+        return {
+            "type": self.type,
+            "callback_id": self.callback_id,
+            "blocks": [
+                HEADER,
+                DIVIDER,
+                START_TEXT,
+                BODY,
+                DIVIDER,
+                GET_STARTED,
+                BUTTON
+            ]
+            
+        }
 
 
-
-#   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
-
-# **************************************************************
-# ******************* SCHEDULE RATING MESSAGE ******************
-# **************************************************************
-
-# Rating message object
-class RatingMessageObj(object):
-    def __init__(self, name, channel, post_at) -> None:
-        self.name = name
+# ** Rating message body/text
+class RatingMessageDisplay(object):
+    def __init__(self, user_id, channel, post_at, scheduled_message_id='', timestamp='', reaction=False) -> None:
+        self.user_id = user_id
         self.channel = channel
         self.post_at = post_at
-        self.scheduled_message_id = ''
-        self.timestamp = ''
-        self.reaction = False
+        self.scheduled_message_id = scheduled_message_id
+        self.timestamp = timestamp
+        self.reaction = reaction
     
     def get_message(self):
+        text = f'Good morning, <@{self.user_id}>! How are you feeling today?'
+
         START_TEXT = {
             'type': 'section',
             'text': {
                 'type': 'mrkdwn',
-                'text': f'Good morning, {self.name}! How are you feeling today?'
+                'text': text
             }
         }
         DIVIDER = {'type': 'divider'}
@@ -160,11 +139,12 @@ class RatingMessageObj(object):
                 )
             }
         }
+
         return {
             'ts': self.timestamp,
             'channel': self.channel,
             'post_at': self.post_at,
-            'text': f'Good morning, {self.name}! How are you feeling today?',
+            'text': text,
             'blocks': [
                 START_TEXT,
                 RATING_SCALE,
@@ -185,304 +165,525 @@ class RatingMessageObj(object):
             }
         }
 
+  
 
-def schedule_rating_message(name, user_id, channel_id):
-    print('scheduling rating message!')
+# ** Get summary message body/text
+class GetSummaryDisplay(object):
+    def __init__(self, user_ratings, channel) -> None:
+        self.user_ratings = user_ratings
+        self.channel = channel
+
+    def get_ratings(self): 
+        for user_rating in self.user_ratings:
+            rating_name = user_rating.rating.name
+            value = user_rating.rating.value
+            date = user_rating.date
+            formatted_date = datetime.datetime.strftime(date, "%a %d-%b")
+            text += f"{formatted_date}\t:arrow_right:\t:{rating_name}:  {value}\n"
+        return text
     
-    # --------------------------------- TESTING & DEVELOPMENT ---------------------------------
-    # test_scheduled_time = datetime.time(hour=datetime.datetime.now().hour,
-    #               minute=(datetime.datetime.now() + datetime.timedelta(seconds=60)).minute,
-    #               second=(datetime.datetime.now() + datetime.timedelta(seconds=60)).second
-    #               )
-    # test_schedule_timestamp = datetime.datetime.combine(datetime.date.today(), test_scheduled_time).strftime('%s')
-    # schedule_timestamp = test_schedule_timestamp
-    # -----------------------------------------------------------------------------------------
+    def get_message(self):
+        START_TEXT = {
+            'type': 'section', 
+            'text': {
+                'type': 'mrkdwn',
+                'text': "You got it, boss! All your ratings are listed below."
+            }        
+        }
+        DIVIDER = {'type': 'divider'}
+        RATING_TEXT = {
+            'type': 'section',
+            'text': {
+                'type': 'mrkdwn',
+                'text': self.get_ratings()
+            }        
+        }
+        return {
+            'channel': self.channel,
+            'type': 'mrkdwn',
+            'text': "You got it, boss! All your ratings are listed below.",
+            'blocks': [
+                START_TEXT,
+                DIVIDER,
+                RATING_TEXT
+            ]        
+        }
 
-    # Create a timestamp
+
+        
+# ! Functions - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+
+# ** Check message was sent by the bot
+def is_bot_message(slack_id):
+    if slack_id == BOT_ID:
+        return True
+    return False
+
+
+# ** Find user
+def find_user(slack_id=None, im_channel=None):
+    if slack_id:
+        return Session.query(User).filter_by(slack_id=slack_id).first()
+    if im_channel:
+        return Session.query(User).filter_by(im_channel=im_channel).first()
+
+
+# ** Find rating message
+def find_rating_message(timestamp=None, channel=None):
+    # all_rating_messages = Session.query(RatingMessage).all()
+    if timestamp: # and timestamp in {message.timestamp for message in all_rating_messages}
+        return Session.query(RatingMessage).filter_by(timestamp=timestamp).first()
+    if channel:
+        return Session.query(RatingMessage).filter_by(channel=channel).order_by(RatingMessage.id.desc()).first()
+
+
+# ** Find a user's rating
+def get_user_ratings(user_id=None, rating_message_id=None):
+    if user_id:
+        return Session.query(Rating).filter_by(user_id=user_id) 
+    if rating_message_id: 
+        return Session.query(Rating).filter_by(rating_message_id=rating_message_id).first()
+
+
+# ** Get a user's Slack ID from message using regex
+def get_slack_id(text=None):
+    return re.findall("\@[\w.-]+", text)[0].strip('@') # body['event']['blocks'][0]['elements'][1]['user_id']
+
+
+# ** List scheduled message IDs
+def list_scheduled_messages(channel):
+    if not channel:
+      return
+    response = client.chat_scheduledMessages_list(channel=channel)
+    messages = response.data['scheduled_messages']
+    ids = set()
+    for msg in messages:
+        ids.add(msg['id'])
+    return ids
+
+
+# ** Delete all scheduled messages
+def delete_scheduled_messages(channel):
+    ids = list_scheduled_messages(channel)
+    for id in ids:
+        app.client.chat_deleteScheduledMessage(channel=channel, scheduled_message_id=id)
+    return ids
+
+  
+# ** Schedule rating message
+def schedule_rating_message(slack_id, channel):
+    print("Scheduling rating message...")
+
+    # Check that the user exists and is active
+    user = find_user(slack_id=slack_id) #Session.query(User).filter_by(slack_id=slack_id).first()
+    if (not user) or (user and user.active == 'false'):
+        raise Exception("User does not exist or is inactive")
+
+    # Create a timestamp: FOR PRODUCTION !!!
     tomorrow = datetime.date.today() + datetime.timedelta(days=1)
     scheduled_time = datetime.time(hour=9, minute=30)
     schedule_timestamp = datetime.datetime.combine(tomorrow, scheduled_time).strftime('%s')
-    
-    scheduled_rating_message = RatingMessageObj(name=name, channel=channel_id, post_at=schedule_timestamp)
-    message = scheduled_rating_message.get_message()
-    
-    # Send scheduled message
-    response = client.chat_scheduleMessage(**message) 
-    scheduled_rating_message.scheduled_message_id = response['scheduled_message_id']
 
-    ScheduledMessage(scheduled_message_id=scheduled_rating_message.scheduled_message_id, 
-                    user_id=user_id,
-                    im_channel=response['channel'], 
-                    message_object=scheduled_rating_message
-                )
+    # Create a timestamp: FOR DEVELOPMENT !!!
+    # scheduled_time = datetime.time(hour=datetime.datetime.now().hour,
+    #     minute=(datetime.datetime.now() + datetime.timedelta(seconds=TEST_TIME)).minute,
+    #     second=(datetime.datetime.now() + datetime.timedelta(seconds=TEST_TIME)).second)
+    # schedule_timestamp = datetime.datetime.combine(datetime.date.today(), scheduled_time).strftime('%s')
 
+    # Create rating message object
+    scheduled_message = RatingMessageDisplay(user_id=slack_id, channel=channel, post_at=schedule_timestamp)
+    message = scheduled_message.get_message()
 
+    # Schedule message
+    response = client.chat_scheduleMessage(**message)
+    print("Rating message scheduled")
 
-#   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
+    # Save the channel from the scheduled message response
+    channel = response['channel']
 
-# **************************************************************
-# ********************** ON EVENT, MESSAGE *********************
-# **************************************************************
+    # List scheduled messages
+    ids = list_scheduled_messages(channel=channel)
+    print(f"Scheduled message IDs: {ids}")
 
-@slack_app.event("app_mention")
-def event_test(body, say, logger):
-    logger.info(body)
-    say("What's up?")
-
-
-import re
-@slack_app.event("message")
-def handle_message(event):
-    print('message event triggered!')
-
-    # event = event_data.get('event')
-
-    # Set base case
-    if event.get('subtype') or event.get('channel_type') != 'im':
-        print('subtype message')
-        return
-    
-    channel = event.get('channel')
-    timestamp = event.get('ts')
-    slack_id = event.get('user')
-    text = event.get('text')
-    user = User.query.filter_by(im_channel=channel).first() # get the user in this instant message channel    
-    BOT_ID = client.api_call('auth.test').get('user_id')
-    # Ignore any messages from a bot or human who isn't in the database
-    if not user or BOT_ID:
-        return
-    user_ratings = Rating.query.filter_by(user_id=user.id) # get the user's ratings
-
-    # First, we will look for rating messages sent by the bot
-    if slack_id == BOT_ID:
-        # Check if the sent message text sent matches the rating message text
-        pattern = '^[Good morning\,]*[\w.-]+\! [How are you feeling today\?]+'
-        match = re.match(pattern, text)
-        if match:
-            print(f'this is the bot rating message. match: {match}')
-            # Get the scheduled message object from the database
-            scheduled_msg = ScheduledMessage.query.filter_by(user_id=user.id).order_by(ScheduledMessage.id.desc()).first()
-            # Add the delivered message timestamp to the table
-            scheduled_msg.timestamp = timestamp
-
-            # Create copy of the message object and update its attributes with the delivered message info
-            delivered_rating_message = scheduled_msg.message_object
-            delivered_rating_message.timestamp = timestamp
-            delivered_rating_message.channel = channel
-
-            # Now that we know the scheduled message delivered, add rating message to the database
-            RatingMessage(user_id=user.id, timestamp=timestamp, message_object=delivered_rating_message)
-            
-            # Schedule next rating message
-            schedule_rating_message(name=user.name, user_id=user.id, channel_id=channel)
-        return
-    
-    # Next, we want to catch any 'get-summary' messages sent by the user
-    # Check the message's slack_id is the user's and that the user has ratings in the database
-    if text == 'get-summary' and slack_id == user.slack_id and user_ratings:
-        # Call the get rating summary function
-        summary_msg = get_rating_summary(user_ratings=user_ratings, channel=channel)
-        # Send the message
-        post_summary = client.chat_postMessage(**summary_msg)
-        return
-
-    # Lastly...
-    # We need to get the thread_ts key from the slack API conversations_replies
-    # method to get the rating message data from the database, if it exists
-    response = client.conversations_replies(channel=channel, ts=timestamp)
-    thread_ts = response['messages'][0].get('thread_ts')
-    if thread_ts is None:
-        return
-    rating_message = RatingMessage.query.filter_by(timestamp=thread_ts).first()
-    if not rating_message:
-        return
-    rating_queue = rating_message.rating_queue
-    if rating_queue == 'NULL':
-        return
-    
-    # Now that we know there is a reaction waiting in the rating message queue,
-    # we can get the rating stored in the database using the rating message ID 
-    rating = Rating.query.filter_by(rating_message_id=rating_message.id).first()
-    # If the user said 'yes' they want to change their rating, update data in database
-    if text.lower() == 'yes':
-        rating.rating = rating_queue
-        rating.modified = True
-        rating.date = datetime.datetime.utcnow()
-        rating_message.date_updated = datetime.datetime.utcnow()
-        rating_message.rating_queue = 'NULL'
-        db.session.commit()
-        return client.chat_postMessage(channel=channel, thread_ts=timestamp, text="You got it! I've updated your response :saluting_face:")
-    # If the user said 'no' they do NOT want to change their rating, remove the reaction from the queue
-    elif text.lower() == 'no':
-        rating_message.rating_queue = 'NULL'
-        db.session.commit()
-        return client.chat_postMessage(channel=channel, thread_ts=timestamp, text="No problem! Consider it forgotten :wink:")
-    # Send error message if the user replied with anything other than 'yes' or 'no'
-    else:
-        client.chat_postMessage(channel=channel, thread_ts=timestamp, text="I'm sorry, I only understand 'yes' and 'no' :disappointed: Can you please try again?")
-
-
-
-#   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
-
-# **************************************************************
-# *********************** REACTION ADDED ***********************
-# **************************************************************
-
-@slack_app.event("reaction_added")
-def rating_message_reaction(event):
-    print('reaction added')
-    # print(json.dumps(event_data, indent=2))
-
-    # event = event_data.get('event')
-    emoji = event.get('reaction')
-    channel_id = event.get('item').get('channel')
-    slack_id = event.get('user')
-    timestamp = event.get('item').get('ts')
-    
-    # Check that the message reacted to is a rating message in the database
-    all_sent_messages = ScheduledMessage.query.all()
-    if timestamp not in {message.timestamp for message in all_sent_messages}:
-        print('not rating message')
-        return
-
-    # Get the user ID and rating message object corresponding to the timestamp from database
-    user_id = User.query.filter_by(slack_id=slack_id).first().id
-    rating_msg = RatingMessage.query.filter_by(timestamp=timestamp).first()
-    
-    # Check that the message was sent within the past 24 hours
-    date_created = rating_msg.date_created
-    time_passed = datetime.datetime.utcnow() - date_created     # date_created = datetime.datetime.strptime(date_created, '%Y-%m-%d %H:%M:%S.%f')
-    time_allocated = datetime.timedelta(hours=24)          
-    # time_allocated = datetime.timedelta(seconds=60) # FOR DEVELOPMENT
-    if time_passed > time_allocated:
-        client.chat_postMessage(channel=channel_id, thread_ts=timestamp, text="I'm sorry, it's too late to react to this message.")
-        return 
-
-    accepted_reacts = ['smile', 'slightly_smiling_face', 'neutral_face', 'slightly_frowning_face', 'white_frowning_face']
-    if emoji not in accepted_reacts:
-        client.chat_postMessage(channel=channel_id, thread_ts=timestamp, text="Hmm. I'm not sure I understand. Are you sure you selected the correct emoji?")
-        return
-    
-    # Check that a reaction has NOT been added to the rating message (default is false)
-    if rating_msg.reaction is False:
-        # Get the rating message object from the database and set reaction attribute to true
-        rating_message = rating_msg.message_object
-        rating_message.reaction = True
-
-        # Call the get message method and update chat
-        message = rating_message.get_message()
-        client.chat_update(**message)
-        
-        # Call the set reaction true method in database and commit changes
-        rating_msg.set_reaction_true()
-        db.session.commit()
-
-        # Add the rating to the database
-        new_rating = Rating(user_id=user_id, rating=emoji, rating_message_id=rating_msg.id)
-
-    # If the rating message already HAS a reaction, add the reaction to the queue 
-    # and catch the user's reply via the 'on message trigger' (see above) 
-    else:
-        rating = Rating.query.filter_by(rating_message_id=rating_msg.id).first()
-        rating_msg.rating_queue = emoji
-        rating.rating_queue = emoji
-        db.session.commit()
-        client.chat_postMessage(channel=channel_id, thread_ts=timestamp, text=f"You already responded to this message. Are you sure you want to update your reaction? Reply yes/no")
-
-
-
-#   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
-
-# **************************************************************
-# ******************* GET RATING SUMMARY FUNC ******************
-# **************************************************************
-
-def get_rating_summary(user_ratings, channel):
-    text = ''
-    for user_rating in user_ratings:
-        rating_name = user_rating.rating.name
-        value = user_rating.rating.value
-        date = user_rating.date
-        formatted_date = datetime.datetime.strftime(date, "%a %d-%b")
-        text += f"{formatted_date}\t:arrow_right:\t:{rating_name}:  {value}\n"
-    
-    START_TEXT = {
-        'type': 'section', 
-        'text': {
-            'type': 'mrkdwn',
-            'text': "You got it, boss! All your ratings are listed below."
-        }        
-    }
-    DIVIDER = {'type': 'divider'}
-    RATING_TEXT = {
-        'type': 'section',
-        'text': {
-            'type': 'mrkdwn',
-            'text': text
-        }        
-    }    
-    return {
-        'channel': channel,
-        'type': 'mrkdwn',
-        'text': "You got it, boss! All your ratings are listed below.",
-        'blocks': [
-            START_TEXT,
-            DIVIDER,
-            RATING_TEXT
-        ]        
-    }
-
-
-
-#   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
-
-@slack_app.event("app_home_opened")
-def update_home_tab(client, event, logger):
-  try:
-    # views.publish is the method that your app uses to push a view to the Home tab
-    client.views_publish(
-      # the user that opened your app's app home
-      user_id=event["user"],
-      # the view object that appears in the app home
-      view={
-        "type": "home",
-        "callback_id": "home_view",
-
-        # body of the view
-        "blocks": [
-          {
-            "type": "section",
-            "text": {
-              "type": "mrkdwn",
-              "text": "*Welcome to your _App's Home_* :tada:"
-            }
-          },
-          {
-            "type": "divider"
-          },
-          {
-            "type": "section",
-            "text": {
-              "type": "mrkdwn",
-              "text": "This button won't do much for now but you can set up a listener for it using the `actions()` method and passing its unique `action_id`. See an example in the `examples` folder within your Bolt app."
-            }
-          },
-          {
-            "type": "actions",
-            "elements": [
-              {
-                "type": "button",
-                "text": {
-                  "type": "plain_text",
-                  "text": "Click me!"
-                }
-              }
-            ]
-          }
-        ]
-      }
+    # Add scheduled message to database
+    rating_message = RatingMessage(
+        user_id = user.id,
+        channel = channel,
+        post_at = schedule_timestamp,
+        scheduled_message_id = response['scheduled_message_id']
     )
+    Session.add(rating_message)
+    Session.commit()
+
+    return print(f"Rating message added to database: {rating_message}")
+
+
+# ** Save reaction to database
+def save_react(rating_message, emoji, channel):
+    user_id = rating_message.user_id
+    slack_id = Session.query(User).get(user_id).slack_id
+    message_id = rating_message.id
+
+    # Reconstruct rating message and set reaction attribute to true
+    update_rating_message = RatingMessageDisplay(
+        user_id=slack_id,
+        channel=channel, 
+        post_at=rating_message.post_at,
+        timestamp=rating_message.timestamp,
+        reaction=True
+    )
+
+    # Get message and update chat
+    message = update_rating_message.get_message()
+    client.chat_update(**message)
+
+    # Update reaction to true and commit changes            
+    rating_message.set_reaction_true()
+    rating_message.date_update_chat = datetime.datetime.utcnow()
+    Session.add(rating_message)
+
+    # Add rating to database
+    rating = Rating(user_id=user_id, rating=emoji, rating_message_id=message_id)
+    Session.add(rating)
+    
+    # Commit changes
+    Session.commit()
+
+    return f"Rating added to database: {rating}"
+
   
-  except Exception as e:
-    logger.error(f"Error publishing home tab: {e}")
+# ** Add reaction to queue (if message already reacted to)
+def queue_react(rating_message, emoji, channel, timestamp):
+    # Add emoji to reaction queue
+    rating_message.rating_queue = emoji
+
+    # Commit changes
+    Session.add(rating_message)
+    Session.commit()
+
+    # Post message
+    client.chat_postMessage(channel=channel, thread_ts=timestamp, text=f"You already responded to this message. Are you sure you want to update your reaction? Reply yes/no")
+    
+    return f"Message posted: 'You already responded to this message. Are you sure you want to update your reaction? Reply yes/no'"
+
+
+
+
+# ! Event Handling - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+# https://github.com/slackapi/bolt-python
+
+
+# ** Home app opened
+@app.event("app_home_opened")
+def update_home_tab(client, event, logger):
+    
+    print("\n'app_home_opened' event triggered")
+    # print(f"Response \n{event}")
+
+    try:
+        # Get the user from the event data
+        slack_id = event["user"]
+        
+        # Create HomeView object
+        home_view = HomeView()
+        
+        # Get the view object that appears in the app home
+        view = home_view.get_view()
+        
+        # Use views.publish() to push a view to the Home tab
+        response = client.views_publish(
+            # the user that opened your app's app home
+            user_id=slack_id,
+            # the main body of the view to display
+            view={**view}
+        )
+
+        # Log the client.views_publish response (optional)
+        # print(f"Home views publish \n{response}")
+        
+    except SlackApiError as e:
+        logger.error(f"Error publishing home tab: {e}")
+      
+    except Exception as ex:
+        logger.error(f"Exception: {ex}")
+
+
+
+# ** "Get started" action
+@app.action("get_started")
+def get_started(ack, body, say, logger):
+    # must acknowledge your app received the incoming event within 3 seconds
+    ack()
+    
+    print("\n'get_started' action triggered")
+    print(f"Response \n{body}")
+    
+    try:
+        # Find user in db
+        slack_id = body['user']['id']
+        user = find_user(slack_id=slack_id)  #Session.query(User).filter_by(slack_id=slack_id).first()
+        
+        # If the user exists and is already active, do nothing
+        if user and user.active == True:
+            return
+        # Add user if they don't exist already
+        elif not user:
+            new_user = User(slack_id=slack_id, im_channel='', active=True)
+            Session.add(new_user)
+            Session.commit()
+            print(f"User added to database: {new_user}")
+        # Set user active if they exist but are inactive
+        else:
+            user.set_user_active()
+            Session.add(user)
+            Session.commit()
+            print(f"User now active: {user}")
+        
+        # Post a message to the chat
+        text = f"Hi there, <@{slack_id}>! Let's get started!"
+        say(text=text, channel=slack_id)
+            
+    except SlackApiError as e:
+        logger.error(f"Error handling 'get started' action: \n{e}")
+      
+    except Exception as ex:
+        logger.error(f"Exception: {ex}")
+
+
+# ** Get started message
+# note: regular expression matches are inside of context.matches
+@app.message("Hi there, \<\@[\w.-]+\>\! Let's get started!")
+def welcome_message_event(body, message, logger):
+    
+    print(f"\nRegEx message event triggered: 'Hi there, \<\@[\w.-]+\>\! Let's get started!'")
+    print(f"Response \n{message}")
+
+    try:
+        # Check the message was sent by the bot
+        if not is_bot_message(body['event']['user']):
+            raise SlackApiError("Message not sent by Ambience bot", 400)
+
+        slack_id = get_slack_id(text=body['event']['text'])
+        channel = body['event']['channel']
+        
+        # Find user and update channel ID
+        user = find_user(slack_id=slack_id)
+        user.im_channel = channel
+        Session.add(user)
+        Session.commit()
+        print(f"User channel updated: {user}")
+
+        # Schedule rating message
+        schedule_rating_message(slack_id=slack_id, channel=slack_id)
+
+    except SlackApiError as e:
+        logger.error(f"Error handling welcome message event: \n{e}")
+      
+    except Exception as ex:
+        logger.error(f"Exception: {ex}")
+
+
+# ** Rating message event
+@app.message(re.compile("^[Good morning\,]* \<\@[\w.-]+\>\! [How are you feeling today\?]+"))
+def rating_message_received(body, message, context, logger):
+    
+    print("\nRegEx message event triggered: '^[Good morning\,]* \<\@[\w.-]+\>\! [How are you feeling today\?]+'")
+    print(f"Response \n{message} \nRegEx matches: {context.matches}")
+
+    try:
+        # Check the message was sent by the bot
+        if not is_bot_message(body['event']['user']):
+            raise SlackApiError("Message not sent by Ambience bot", 400)
+        
+        # Get the user, message ts, and channel
+        slack_id = get_slack_id(text=body['event']['text'])
+        timestamp = body['event']['ts']
+        channel = body['event']['channel']
+        print(f"<slack_id = {slack_id} | timestamp = {timestamp} | channel = {channel}>")
+
+        # Check rating message exists
+        rating_message = find_rating_message(channel=channel)
+        if not rating_message:
+            raise Exception("Rating message not found")
+        
+        # Add timestamp, sent date, and expiration date
+        rating_message.timestamp = timestamp
+        now = datetime.datetime.utcnow()
+        expiration_date = now + datetime.timedelta(hours=24) # FOR PRODUCTION !!!
+        # expiration_date = now + datetime.timedelta(seconds=TEST_TIME) # FOR DEVELOPMENT !!!
+        rating_message.date_sent = now
+        rating_message.date_expired = expiration_date
+
+        # Commit changes
+        Session.add(rating_message)
+        Session.commit()
+        print(f"Rating message updated: {rating_message}")
+
+        # Schedule next rating message
+        schedule_rating_message(slack_id=slack_id, channel=channel)
+    
+    except SlackApiError as e:
+        logger.error(f"Error handling rating message event: \n{e}")
+      
+    except Exception as ex:
+        logger.error(f"Exception: {ex}")
+
+
+# ** Reaction added event
+@app.event("reaction_added")
+def reaction_added(body, event, logger):
+    
+    print("\nReaction event triggered")
+    print(f"Response \n{event}")
+
+    try:
+        emoji = event['reaction']
+        channel = event['item']['channel']
+        slack_id = event['user']
+        timestamp = event['item']['ts']
+
+        # Check the user exists
+        user = find_user(slack_id=slack_id) #Session.query(User).filter_by(slack_id=slack_id).first()
+        if not user:
+            raise Exception(f"User not found")
+    
+        # Check the message is a rating message
+        rating_message = find_rating_message(timestamp=timestamp)
+        if not rating_message:
+            raise Exception(f"Rating message not found")
+        
+        # Check the message was sent within the past 24 hours
+        date_expired = rating_message.date_expired
+        if datetime.datetime.utcnow() > date_expired:
+            client.chat_postMessage(channel=channel, thread_ts=timestamp, text="I'm sorry, it's too late to react to this message.")
+            return "Message posted: I'm sorry, it's too late to react to this message."
+        
+        # Check the user responded with one of the accepted emojis
+        if emoji not in {'smile', 'slightly_smiling_face', 'neutral_face', 'slightly_frowning_face', 'white_frowning_face'}:
+            client.chat_postMessage(channel=channel, thread_ts=timestamp, text="Hmm. I'm not sure I understand. Are you sure you selected the correct emoji?")
+            return "Message posted: Hmm. I'm not sure I understand. Are you sure you selected the correct emoji?"
+
+        reaction = rating_message.reaction
+        
+        # Check if message already has a reaction (default reaction is false)
+        if reaction:
+            queue_react(rating_message, emoji, channel, timestamp)
+        else:
+            save_react(rating_message, emoji, channel)
+
+    except SlackApiError as e:
+        logger.error(f"Error handling 'reaction added' event: \n{e}")
+      
+    except Exception as ex:
+        logger.error(f"Exception: {ex}")
+
+        
+        
+# ** Get summary command
+@app.command("get-summary")
+def get_summary(ack, respond, body, event, logger):
+    # must acknowledge your app received the incoming event within 3 seconds
+    ack()
+    
+    print(f"\n'get-summary' command triggered")
+    print(f"Response \n{event}")
+
+    try:
+        channel = body['event']['channel']
+
+        # Check that the user exists
+        user = find_user(im_channel=channel)  #Session.query(User).filter_by(im_channel=channel).first() # User.query.filter_by(im_channel=channel).first()
+        if not user:
+            raise Exception(f"User not found")
+        
+        # Get the user's ratings
+        user_ratings = get_user_ratings(user_id=user.id)
+        if not user_ratings:
+            raise Exception(f"User ratings not found")
+        
+        # Create summary message object
+        summary_msg = GetSummaryDisplay(user_ratings=user_ratings, channel=channel)
+        message = summary_msg.get_message()
+        
+        # respond(f"Hi <@{body['user_id']}>!")
+        respond(**message)
+        
+    except SlackApiError as e:
+        logger.error(f"Error running get-summary command: \n{e}")
+      
+    except Exception as ex:
+        logger.error(f"Exception: {ex}")
+
+        
+
+@app.message("^(?i:(Yes|Yeah|Yep|Ya|No|Nah).*)$")
+def yes_no_message(body, message, context, logger):
+    
+    print(f"\nMessage event triggered: yes/no")
+    print(f"Response \n{message} \nRegEx matches: {context.matches}")
+    
+    try:
+        
+        # Check the message was NOT sent by the bot        
+        if is_bot_message(body['event']['user']):
+          return 
+        
+        text = body['event']['text']
+        timestamp = body['event']['thread_ts']
+        
+        
+        rating_message = find_rating_message(timestamp=timestamp) #Session.query(RatingMessage).filter_by(timestamp=thread_ts).first()
+        if not rating_message:
+            raise Exception(f"Rating message not found")
+        
+        if rating_message.rating_queue is None:
+            raise Exception(f"Rating queue is empty")
+          
+        channel = rating_message.channel
+        
+        # Now that we know there is a reaction waiting in the rating message queue,
+        # we can get the rating stored in the database using the rating message ID 
+        rating = get_user_ratings(rating_message_id=rating_message.id) #Session.query(Rating).filter_by(rating_message_id=rating_message.id).first()
+        
+        # User replied 'yes' they want to change their rating
+        if re.match("(?i)^[yes]+", text):
+            # Change rating to rating queue and clear queue
+            rating.change_rating(rating=rating_message.rating_queue)
+            rating_message.clear_queue()
+            
+            # Commit changes
+            Session.commit()
+
+            client.chat_postMessage(channel=channel, thread_ts=timestamp, text="You got it! I've updated your response :saluting_face:")
+            return "Message posted: You got it! I've updated your response :saluting_face:"
+        
+        # User replied 'no' they do not want to change their rating
+        elif re.match("(?i)^[no]+", text):
+            # Remove the reaction from the queue
+            rating_message.clear_queue()
+
+            # Commit changes
+            Session.add(rating_message)
+            Session.commit()
+            
+            client.chat_postMessage(channel=channel, thread_ts=timestamp, text="No problem! Consider it forgotten :wink:")
+            return "Message posted: No problem! Consider it forgotten :wink:"
+        
+        # User replied with something other than 'yes' or 'no'
+        else:
+            client.chat_postMessage(channel=channel, thread_ts=timestamp, text="I'm sorry, I only understand 'yes' and 'no' :disappointed: Can you please try again?")
+            return "Message posted: I'm sorry, I only understand 'yes' and 'no' :disappointed: Can you please try again?"
+        
+    except SlackApiError as e:
+        logger.error(f"Error handling yes/no message or updating reaction in db: \n{e}")
+      
+    except Exception as ex:
+        logger.error(f"Exception: {ex}")
+
+
+
+@app.event("message")
+def handles_messages(event, context):
+    # print(f"Message event \n{context}")
+    return "Message event triggered"
