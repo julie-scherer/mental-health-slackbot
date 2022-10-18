@@ -1,7 +1,7 @@
 # Import packages
 from sqlalchemy import Column, ForeignKey, Integer, Table, String, Boolean, DateTime, Enum
 from sqlalchemy.orm import declarative_base, relationship
-from datetime import datetime
+from datetime import datetime, timedelta
 import enum
 
 Base = declarative_base()
@@ -17,7 +17,6 @@ class User(Base):
     im_channel = Column(String(50), unique=True) # D0420PRB3BL
     active = Column(Boolean, default=False, nullable=False)
     date_added = Column(DateTime, nullable=False, default=datetime.utcnow)
-    # date_active = Column(DateTime, nullable=True)
     
     rating_messages = relationship('RatingMessage', backref='users', lazy=True)
     ratings = relationship('Rating', backref='users', lazy=True)
@@ -27,7 +26,6 @@ class User(Base):
     
     def set_user_active(self):
         self.active = True
-        # self.date_active = datetime.utcnow()
 
 
 
@@ -40,13 +38,15 @@ class RatingMessage(Base):
     channel = Column(String(50), nullable=False)
     post_at = Column(String(50), nullable=False)
     scheduled_message_id = Column(String(100), nullable=False, unique=True)
-    timestamp = Column(String(50), default='')
-    reaction = Column(Boolean, default=False)
-    rating_queue = Column(String(50), nullable=True, default=None)
     date_created = Column(DateTime, nullable=False, default=datetime.utcnow)
+    date_expired = Column(DateTime, nullable=False, default=(datetime.utcnow() + timedelta(hours=24)))    
+
+    timestamp = Column(String(50), default='')
     date_sent = Column(DateTime, nullable=True)
     date_update_chat = Column(DateTime, nullable=True)
-    date_expired = Column(DateTime, nullable=True)
+    
+    reaction = Column(Boolean, default=False)
+    rating_queue = Column(String(50), nullable=True, default=None)
     
     rating = relationship('Rating', backref='rating_message', lazy=True)
         
@@ -58,7 +58,7 @@ class RatingMessage(Base):
 
     def clear_queue(self):
         self.rating_queue = None
-        
+
 
 
 # Rating Schema
