@@ -1,8 +1,7 @@
+_*
 __pycache__
 .ipynb_checkpoints
 .DS_Store
 .env
 venv
 data
-json
-00
