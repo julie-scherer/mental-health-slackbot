@@ -14,7 +14,9 @@ import pytz
 
 utc = pytz.UTC
 
+
 BOT_ID = client.api_call("auth.test")['user_id']
+
 
 SCHEDULE_HOUR = 9
 SCHEDULE_MIN = 0
@@ -38,6 +40,7 @@ def log_message(body, next, logger):
   
 
 # ! Object Classes - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
 
 # ** Home view display
 class HomeView(object):
@@ -112,7 +115,6 @@ class HomeView(object):
                 GET_STARTED,
                 BUTTON
             ]
-
         }
 
 
@@ -222,6 +224,7 @@ class GetSummaryDisplay(object):
 
 
 # ! Functions - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
 
 # ** Check message was sent by the bot
 def is_bot_message(slack_id):
@@ -396,6 +399,7 @@ def queue_react(rating_message, emoji, channel, timestamp):
   
 # ! Event Handling - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # https://github.com/slackapi/bolt-python
+
 
 # ** Home app opened
 @app.event("app_home_opened")
@@ -637,7 +641,7 @@ def get_summary(ack, respond, body, event, logger):
         logger.error(f"Exception: {ex}")
 
 
-# ** User replies yes/no (to changing their react/rating)
+# ** User replies yes/no (for changing reacts)
 @app.message("^(?i:(Yes|Yeah|Yep|Ya|No|Nah).*)$")
 def yes_no_message(body, message, context, logger):
 
