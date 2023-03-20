@@ -86,4 +86,4 @@ class Rating(Base):
     def change_rating(self, rating):
         self.rating = rating
         self.modified = True
-        self.date_modified = datetime.utcnow()    
+        self.date_modified = datetime.utcnow()

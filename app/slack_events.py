@@ -6,7 +6,8 @@ logger = logging.getLogger(__name__)
 
 
 from app.models import User, RatingMessage, Rating
-from app import app, client, Session
+from app import app, client, Session, create_session #, select
+
 from datetime import timedelta
 import datetime
 import re
@@ -28,7 +29,7 @@ SCHEDULE_SEC = 0
 
 @app.middleware
 def log_request(body, next, logger):
-    print(f"\nLog request \n{body}")
+    # print(f"\nLog request \n{body}")
     return next()
 
 
@@ -292,6 +293,7 @@ def schedule_rating_message(slack_id, channel):
     user = find_user(slack_id=slack_id) # Session.query(User).filter_by(slack_id=slack_id).first()
     if (not user) or (user and user.active == 'false'):
         raise Exception("User does not exist or is inactive")
+        return
 
     # Create timestamp
     scheduled_timestamp = scheduled_datetime().strftime('%s')
@@ -318,8 +320,7 @@ def schedule_rating_message(slack_id, channel):
         post_at=scheduled_timestamp,
         scheduled_message_id=response['scheduled_message_id']
     )
-    Session.add(rating_message)
-    Session.commit()
+    create_session(rating_message)
 
     return print(f"Rating message added to database: {rating_message}")
 
@@ -375,8 +376,7 @@ def save_react(rating_message, emoji, channel):
                     rating_message_id=message_id)
 
     # Commit changes
-    Session.add(rating)
-    Session.commit()
+    create_session(rating)
 
     return f"Rating added to database: {rating}"
 
@@ -387,8 +387,7 @@ def queue_react(rating_message, emoji, channel, timestamp):
     rating_message.rating_queue = emoji
 
     # Commit changes
-    Session.add(rating_message)
-    Session.commit()
+    create_session(rating_message)
 
     # Post message
     client.chat_postMessage(channel=channel, thread_ts=timestamp, text=f"You already responded to this message. Are you sure you want to update your reaction? Reply yes/no")
@@ -456,14 +455,12 @@ def get_started(ack, body, say, logger):
         # Add user if they don't exist already
         elif not user:
             new_user = User(slack_id=slack_id, im_channel='', active=True)
-            Session.add(new_user)
-            Session.commit()
+            create_session(new_user)
             print(f"User added to database: {new_user}")
         # Set user active if they exist but are inactive
         else:
             user.set_user_active()
-            Session.add(user)
-            Session.commit()
+            create_session(user)
             print(f"User now active: {user}")
 
         # Post a message to the chat
@@ -497,8 +494,7 @@ def welcome_message_event(body, message, logger):
         # Find user and update channel ID
         user = find_user(slack_id=slack_id)
         user.im_channel = channel
-        Session.add(user)
-        Session.commit()
+        create_session(user)
         print(f"User channel updated: {user}")
 
         # Schedule rating message
@@ -528,8 +524,7 @@ def rating_message_received(body, message, context, logger):
         slack_id = get_slack_id(text=body['event']['text'])
         timestamp = body['event']['ts']
         channel = body['event']['channel']
-        print(
-            f"<slack_id = {slack_id} | timestamp = {timestamp} | channel = {channel}>")
+        print(f"<slack_id = {slack_id} | timestamp = {timestamp} | channel = {channel}>")
 
         # Check rating message exists
         rating_message = find_rating_message(channel=channel)
@@ -540,13 +535,13 @@ def rating_message_received(body, message, context, logger):
         rating_message.date_sent = datetime.datetime.utcnow()
         rating_message.timestamp = timestamp
 
-        # Commit changes
-        Session.add(rating_message)
-        Session.commit()
-        print(f"Rating message updated: {rating_message}")
-
         # Schedule next rating message
         schedule_rating_message(slack_id=slack_id, channel=slack_id)
+        
+        # Commit changes
+        create_session(rating_message)
+        print(f"Rating message updated: {rating_message}")
+
 
     except SlackApiError as e:
         logger.error(f"Error handling rating message event: \n{e}")
@@ -675,8 +670,7 @@ def yes_no_message(body, message, context, logger):
             rating.change_rating(rating=rating_message.rating_queue)
             rating_message.clear_queue()
 
-            # Commit changes
-            Session.commit()
+            create_session(rating, rating_message)
 
             client.chat_postMessage(channel=channel, thread_ts=timestamp,
                                     text="You got it! I've updated your response :saluting_face:")
@@ -688,8 +682,7 @@ def yes_no_message(body, message, context, logger):
             rating_message.clear_queue()
 
             # Commit changes
-            Session.add(rating_message)
-            Session.commit()
+            create_session(rating_message)
 
             client.chat_postMessage(
                 channel=channel, thread_ts=timestamp, text="No problem! Consider it forgotten :wink:")

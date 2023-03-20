@@ -1,3 +1,7 @@
+# Deploying a slack_bolt app with gunicorn
+# https://blog.tryfrindle.com/deploying-a-slack_bolt-app-with-gunicorn/
+
+
 from app import flask_app, handler
 from flask import request
 
@@ -25,7 +29,3 @@ def install():
 @flask_app.route("/slack/oauth_redirect", methods=["GET"])
 def oauth_redirect():
     return handler.handle(request)
-
-
-# Deploying a slack_bolt app with gunicorn
-# https://blog.tryfrindle.com/deploying-a-slack_bolt-app-with-gunicorn/
